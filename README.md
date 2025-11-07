@@ -67,11 +67,13 @@ RobomasterEPCore_AI_detection_sorting/
 
 ## Requirements
 
-- Python 3.7+
+- Python 3.6-3.8
 - RoboMaster EP Core robot
 - RoboMaster SDK
 - Computer vision libraries (OpenCV, PyTorch/TensorFlow)
 - Pre-trained object detection model (YOLO recommended)
+
+- Read this for detailed installation: https://robomaster-dev.readthedocs.io/en/latest/introduction.html
 
 ## Installation
 
@@ -163,62 +165,7 @@ This base project provides the structure. To complete the implementation:
 - ⏳ Pick and place objects using gripper
 - ⏳ Real-time object tracking
 
-## Development Status
 
-This is a **base project structure**. The following components need implementation:
-- [ ] RoboMaster SDK integration
-- [ ] Camera streaming implementation
-- [ ] AI model loading and inference
-- [ ] Movement control implementation
-- [ ] Gripper control implementation
-- [ ] Sorting logic integration
-- [ ] Main application loop
-
-## Testing
-
-Run tests:
-```bash
-pytest tests/
-```
-
-## Logging
-
-Logs are saved to `logs/robomaster_sorting.log`. Configure log level in `config/settings.py`.
-
-## Troubleshooting
-
-### Connection Issues
-- Ensure robot is powered on and connected to the same network
-- Check IP address configuration in settings
-- Verify RoboMaster SDK is properly installed
-
-### Detection Issues
-- Verify model path is correct
-- Check confidence threshold settings
-- Ensure adequate lighting conditions
-- Validate image preprocessing pipeline
-
-### Movement Issues
-- Check movement speed settings
-- Verify navigation tolerance
-- Ensure sufficient space for robot movement
-
-## Contributing
-
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Submit a pull request
-
-## License
-
-See LICENSE file for details.
-
-## Contact
-
-For questions or issues, please open an issue on the project repository.
 
 ## Acknowledgments
 
