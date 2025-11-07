@@ -67,11 +67,12 @@ RobomasterEPCore_AI_detection_sorting/
 
 ## Requirements
 
-- Python 3.7+
+- Python 3.6-3.8
 - RoboMaster EP Core robot
 - RoboMaster SDK
 - Computer vision libraries (OpenCV, PyTorch/TensorFlow)
 - Pre-trained object detection model (YOLO recommended)
+- See for detailed installation: https://robomaster-dev.readthedocs.io/en/latest/introduction.html
 
 ## Installation
 
