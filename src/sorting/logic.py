@@ -50,18 +50,53 @@ class SortingController:
         Returns:
             bool: True if sorting successful
         """
-        # TODO: Implement object sorting logic
         if not self.strategy:
             logger.error("No sorting strategy set")
             return False
 
-        logger.info(f"Sorting object: {detected_object}")
-        # 1. Determine target zone using strategy
-        # 2. Navigate to object
-        # 3. Pick up object
-        # 4. Navigate to target zone
-        # 5. Place object
-        return False
+        try:
+            logger.info(f"Sorting object: {detected_object}")
+
+            # 1. Determine target zone using strategy
+            zone_name = self.strategy.determine_zone(detected_object)
+            zone = self.zone_manager.get_zone(zone_name)
+
+            if not zone:
+                logger.error(f"Zone '{zone_name}' not found")
+                return False
+
+            logger.info(f"Target zone: {zone_name}")
+
+            # 2. Navigate to object
+            if not self.navigate_to_object(detected_object):
+                logger.error("Failed to navigate to object")
+                return False
+
+            # 3. Pick up object
+            if not self.pick_up_object():
+                logger.error("Failed to pick up object")
+                return False
+
+            # 4. Navigate to target zone
+            zone_position = zone.position
+            from ..robot_control import RobotMovement
+            movement = RobotMovement(self.robot)
+            if not movement.move_to_position(zone_position[0], zone_position[1]):
+                logger.error("Failed to navigate to zone")
+                return False
+
+            # 5. Place object in zone
+            if not self.place_object_in_zone(zone_name):
+                logger.error("Failed to place object")
+                return False
+
+            self.sorted_objects_count += 1
+            logger.info(f"Successfully sorted object to {zone_name}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error sorting object: {e}")
+            return False
 
     def sort_objects_batch(self, detected_objects: List[DetectedObject]) -> int:
         """
@@ -114,9 +149,33 @@ class SortingController:
         Returns:
             bool: True if navigation successful
         """
-        # TODO: Implement navigation logic using object position
-        logger.info(f"Navigating to object at {detected_object.bbox}")
-        return False
+        try:
+            logger.info(f"Navigating to object at {detected_object.bbox}")
+
+            # Get object center position in image
+            center_x, center_y = detected_object.center
+
+            # For now, use simple approach: move forward a fixed distance
+            # In production, you would calculate distance based on object size
+            # or use depth sensors
+
+            from ..robot_control import RobotMovement
+            movement = RobotMovement(self.robot)
+
+            # Simple approach: move forward 0.3m
+            # You should adjust this based on actual distance measurement
+            success = movement.move_forward(distance=0.3, speed=0.3)
+
+            if success:
+                logger.info("Reached object position")
+                return True
+            else:
+                logger.error("Failed to reach object")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error navigating to object: {e}")
+            return False
 
     def pick_up_object(self) -> bool:
         """
@@ -125,9 +184,32 @@ class SortingController:
         Returns:
             bool: True if pickup successful
         """
-        # TODO: Implement pickup logic
-        logger.info("Picking up object")
-        return False
+        try:
+            logger.info("Picking up object")
+
+            from ..robot_control import RobotGripper
+            gripper = RobotGripper(self.robot)
+
+            # Open gripper
+            if not gripper.open(power=50):
+                logger.error("Failed to open gripper")
+                return False
+
+            # Wait a moment
+            import time
+            time.sleep(0.5)
+
+            # Close gripper to grab object
+            if not gripper.grab_object(power=50):
+                logger.error("Failed to grab object")
+                return False
+
+            logger.info("Object picked up successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error picking up object: {e}")
+            return False
 
     def place_object_in_zone(self, zone_name: str) -> bool:
         """
@@ -139,6 +221,25 @@ class SortingController:
         Returns:
             bool: True if placement successful
         """
-        # TODO: Implement placement logic
-        logger.info(f"Placing object in zone '{zone_name}'")
-        return False
+        try:
+            logger.info(f"Placing object in zone '{zone_name}'")
+
+            from ..robot_control import RobotGripper
+            gripper = RobotGripper(self.robot)
+
+            # Release object
+            if not gripper.release_object(power=50):
+                logger.error("Failed to release object")
+                return False
+
+            # Update zone count
+            zone = self.zone_manager.get_zone(zone_name)
+            if zone:
+                zone.add_object()
+
+            logger.info("Object placed successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error placing object: {e}")
+            return False

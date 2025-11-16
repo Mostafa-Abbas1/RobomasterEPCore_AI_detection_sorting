@@ -66,14 +66,20 @@ def initialize_vision():
     logger = logging.getLogger(__name__)
     logger.info("Initializing vision system...")
 
+    # Use pre-trained YOLOv8n model (model_path=None)
+    # If you have a custom model, set DETECTION_MODEL_PATH in settings.py
+    import os
+    model_path = None if not os.path.exists(settings.DETECTION_MODEL_PATH) else settings.DETECTION_MODEL_PATH
+
     detector = ObjectDetector(
-        model_path=settings.DETECTION_MODEL_PATH,
+        model_path=model_path,
         confidence_threshold=settings.DETECTION_CONFIDENCE_THRESHOLD
     )
 
     # Load detection model
     if not detector.load_model():
-        logger.warning("Failed to load detection model (will use placeholder)")
+        logger.error("Failed to load detection model! Make sure ultralytics is installed.")
+        raise RuntimeError("Cannot initialize vision system - model loading failed")
 
     preprocessor = ImagePreprocessor()
     tracker = ObjectTracker(max_disappeared=settings.MAX_DISAPPEARED_FRAMES)
@@ -139,32 +145,92 @@ def main():
         # Initialize sorting system
         sorting_controller = initialize_sorting(connection.robot)
 
-        # TODO: Implement main application loop
-        logger.info("System initialized and ready")
-        logger.info("Main loop not yet implemented - this is the base project structure")
+        # Start camera stream
+        logger.info("Starting camera stream...")
+        if not camera.start_stream(display=False):
+            logger.error("Failed to start camera stream")
+            return 1
 
-        # Example of what the main loop would look like:
-        # while True:
-        #     # 1. Get frame from camera
-        #     frame = camera.get_frame()
-        #
-        #     # 2. Preprocess image
-        #     processed = preprocessor.preprocess_for_detection(frame)
-        #
-        #     # 3. Detect objects
-        #     detections = detector.detect_objects(processed)
-        #
-        #     # 4. Track objects
-        #     tracked = tracker.update(detections)
-        #
-        #     # 5. Sort objects
-        #     for obj in detections:
-        #         sorting_controller.sort_object(obj)
+        # Main application loop
+        logger.info("=" * 50)
+        logger.info("Starting main detection and sorting loop")
+        logger.info("Press Ctrl+C to stop")
+        logger.info("=" * 50)
 
-        # Cleanup
-        logger.info("Shutting down...")
-        connection.disconnect()
-        logger.info("Shutdown complete")
+        import cv2
+        import time
+
+        frame_count = 0
+        detection_interval = 30  # Detect every 30 frames to reduce processing load
+
+        try:
+            while True:
+                # 1. Get frame from camera
+                frame = camera.get_frame()
+                if frame is None:
+                    logger.warning("No frame received, retrying...")
+                    time.sleep(0.1)
+                    continue
+
+                frame_count += 1
+
+                # Only run detection every N frames
+                if frame_count % detection_interval == 0:
+                    logger.info(f"Processing frame {frame_count}...")
+
+                    # 2. Preprocess image (optional - can improve detection)
+                    processed = preprocessor.preprocess_for_detection(frame)
+
+                    # 3. Detect objects
+                    detections = detector.detect_objects(processed)
+
+                    if detections:
+                        logger.info(f"Found {len(detections)} objects")
+
+                        # Filter for target classes only
+                        target_detections = [
+                            obj for obj in detections
+                            if obj.class_name in settings.OBJECT_CLASSES
+                        ]
+
+                        if target_detections:
+                            logger.info(f"Found {len(target_detections)} target objects")
+
+                            # Sort the first detected target object
+                            # (In production, you might want to sort all or prioritize)
+                            obj_to_sort = target_detections[0]
+                            logger.info(f"Attempting to sort: {obj_to_sort}")
+
+                            if sorting_controller.sort_object(obj_to_sort):
+                                logger.info("Object sorted successfully!")
+                            else:
+                                logger.warning("Failed to sort object")
+
+                            # Show statistics
+                            stats = sorting_controller.get_sorting_statistics()
+                            logger.info(f"Statistics: {stats}")
+
+                # Optional: Display frame with detections (for debugging)
+                if settings.ENABLE_VISUALIZATION and frame_count % detection_interval == 0:
+                    if detections:
+                        vis_frame = detector.draw_detections(frame, detections)
+                        cv2.imshow("Detection", vis_frame)
+                        cv2.waitKey(1)
+
+                # Small delay to prevent overload
+                time.sleep(0.033)  # ~30 FPS
+
+        except KeyboardInterrupt:
+            logger.info("\nStopping main loop...")
+
+        finally:
+            # Cleanup
+            logger.info("Shutting down...")
+            if settings.ENABLE_VISUALIZATION:
+                cv2.destroyAllWindows()
+            camera.stop_stream()
+            connection.disconnect()
+            logger.info("Shutdown complete")
 
         return 0
 

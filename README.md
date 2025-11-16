@@ -157,13 +157,118 @@ This base project provides the structure. To complete the implementation:
    - Run integration tests
    - Adjust parameters for optimal performance
 
-## Project Goals
+## Project Status
 
-- ✅ Detect at least 3 different object types
-- ⏳ Sort objects autonomously
-- ⏳ Navigate to objects and sorting zones
-- ⏳ Pick and place objects using gripper
-- ⏳ Real-time object tracking
+- ✅ Detect at least 3 different object types (YOLOv8 integrated)
+- ✅ Sort objects autonomously (implemented)
+- ✅ Navigate to objects and sorting zones (implemented)
+- ✅ Pick and place objects using gripper (implemented)
+- ✅ Real-time object tracking (basic implementation)
+- ✅ RoboMaster SDK fully integrated
+- ✅ Camera streaming and frame capture
+- ✅ Main program loop complete
+
+## Quick Start
+
+### 1. Installation
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+```
+
+This will install:
+- RoboMaster SDK
+- YOLOv8 (Ultralytics)
+- OpenCV
+- All other required packages
+
+### 2. Robot Setup
+
+1. Connect your RoboMaster EP Core to your WiFi network using the DJI app
+2. Note the robot's IP address (or use auto-discovery)
+
+### 3. Test the System
+
+Before running the full program, test individual components:
+
+```bash
+python test_system.py
+```
+
+This will test:
+- ✓ Robot connection
+- ✓ Camera stream
+- ✓ YOLO object detection
+
+### 4. Run the Main Program
+
+```bash
+python main.py
+```
+
+The program will:
+1. Connect to the robot
+2. Start camera stream
+3. Load YOLOv8 model (downloads automatically on first run)
+4. Detect objects (bottle, cup, book by default)
+5. Sort detected objects into designated zones
+
+## Configuration
+
+Edit `config/settings.py` to customize:
+
+### Object Classes
+
+Currently configured for COCO dataset classes:
+```python
+OBJECT_CLASSES = [
+    "bottle",   # Zone A
+    "cup",      # Zone B
+    "book"      # Zone C
+]
+```
+
+You can use any COCO classes: "cell phone", "mouse", "keyboard", "banana", "apple", etc.
+
+### Training Custom Model
+
+To detect custom objects (cube, sphere, cylinder):
+1. Collect and label training data
+2. Train YOLOv8 model
+3. Update `DETECTION_MODEL_PATH` in `config/settings.py`
+
+### Sorting Zones
+
+Adjust zone positions in meters:
+```python
+SORTING_ZONES = {
+    "zone_a": {"position": (1.0, 0.5), "capacity": 10},
+    "zone_b": {"position": (1.0, 1.5), "capacity": 10},
+    "zone_c": {"position": (1.0, 2.5), "capacity": 10},
+}
+```
+
+## How It Works
+
+### Detection Pipeline
+
+1. **Camera Stream**: Captures live video from robot camera
+2. **YOLO Detection**: YOLOv8 detects objects in each frame
+3. **Filtering**: Only target classes are processed
+4. **Sorting Decision**: Strategy determines target zone
+
+### Sorting Process
+
+For each detected object:
+1. Navigate to object position
+2. Open gripper
+3. Close gripper to grab object
+4. Navigate to target zone
+5. Open gripper to release object
+6. Update statistics
+
+## Project Goals
 
 
 
