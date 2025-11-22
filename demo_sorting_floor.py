@@ -12,11 +12,17 @@ Setup:
 import sys
 import time
 import cv2
+import numpy as np
 import threading
 from pathlib import Path
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+# ========================================
+# CONFIGURATION
+# ========================================
+BRIGHTNESS_FACTOR = 1.8  # Image brightness for low light (1.0 = no change, higher = brighter)
 
 from robomaster import robot, camera as rm_camera
 from config import settings
@@ -83,6 +89,29 @@ class LiveDisplay:
         cv2.destroyAllWindows()
 
 
+def brighten_image(image, factor=1.3):
+    """
+    Brighten image for better detection in low light
+
+    Args:
+        image: Input image (BGR)
+        factor: Brightness factor (1.0 = no change, >1.0 = brighter)
+
+    Returns:
+        Brightened image
+    """
+    # Convert to HSV and increase V channel
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+
+    # Increase brightness
+    v = np.clip(v * factor, 0, 255).astype(np.uint8)
+
+    # Merge and convert back
+    hsv = cv2.merge([h, s, v])
+    return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+
 def print_header(text):
     """Print formatted header"""
     print("\n" + "=" * 60)
@@ -117,9 +146,10 @@ def calculate_object_position(detection, frame_width, frame_height):
 
     # Approximate angle offset (very rough estimation)
     # Assuming ~60° horizontal FOV
-    # If object is RIGHT of center (+offset_x), robot needs to turn RIGHT (+angle)
-    # If object is LEFT of center (-offset_x), robot needs to turn LEFT (-angle)
-    angle_offset = (offset_x / frame_center_x) * 30  # degrees
+    # RoboMaster SDK: positive z = counter-clockwise (left), negative z = clockwise (right)
+    # If object is RIGHT of center (+offset_x), robot needs to turn RIGHT (negative z)
+    # If object is LEFT of center (-offset_x), robot needs to turn LEFT (positive z)
+    angle_offset = -(offset_x / frame_center_x) * 30  # degrees (negated for correct direction)
 
     # Debug output
     print(f"  [Debug] center_x={center_x:.0f}, frame_center={frame_center_x:.0f}, offset_x={offset_x:.0f}°")
@@ -212,11 +242,11 @@ def main():
     print_step(3, "Loading YOLO Detection Model")
 
     try:
-        detector = ObjectDetector(confidence_threshold=0.5)
+        detector = ObjectDetector(confidence_threshold=0.35)  # Lowered for dark environments
         if not detector.load_model():
             raise RuntimeError("Failed to load YOLO model")
 
-        print(f"✓ YOLO model loaded")
+        print(f"✓ YOLO model loaded (confidence threshold: 0.35 for low light)")
 
     except Exception as e:
         print(f"✗ Failed to load YOLO: {e}")
@@ -252,7 +282,7 @@ def main():
         # Move arm forward and DOWN to floor level
         # x=120: Forward position to reach objects
         # y=-100: LOWEST position for floor pickup (cups & bottles)
-        ep_arm.move(x=120, y=-100).wait_for_completed()
+        ep_arm.move(x=120, y=-100).wait_for_completed(timeout=5)
         time.sleep(1)
         print("✓ Arm positioned at LOWEST level for floor pickup")
     except Exception as e:
@@ -278,26 +308,45 @@ def main():
         print(f"{'='*50}")
         live_display.update_status("Scanning for objects...")
 
-        # Wait for camera to stabilize
-        time.sleep(0.8)
+        # Wait for camera to stabilize (increased for better detection)
+        time.sleep(1.2)
 
-        # Get current frame
-        frame = threaded_cam.read()
+        # Scan multiple frames to improve detection reliability
+        SCAN_FRAMES = 3
+        target_detections = []
+        frame = None
+
+        for scan_attempt in range(SCAN_FRAMES):
+            frame = threaded_cam.read()
+
+            if frame is None:
+                time.sleep(0.3)
+                continue
+
+            # Brighten image for better detection in low light
+            bright_frame = brighten_image(frame, factor=BRIGHTNESS_FACTOR)
+
+            # Detect objects in brightened image
+            detections = detector.detect_objects(bright_frame)
+            found_targets = [d for d in detections if d.class_name in settings.OBJECT_CLASSES]
+
+            if found_targets:
+                target_detections = found_targets
+                print(f"  ✓ Found object on scan attempt {scan_attempt + 1}/{SCAN_FRAMES}")
+                break
+
+            time.sleep(0.3)  # Wait before next scan attempt
 
         if frame is None:
-            print("⚠ No frame available")
+            print("⚠ No frame available after multiple attempts")
             rotations_without_find += 1
             # Rotate and continue
             try:
-                ep_chassis.move(x=0, y=0, z=ROTATION_STEP, z_speed=45).wait_for_completed()
+                ep_chassis.move(x=0, y=0, z=ROTATION_STEP, z_speed=45).wait_for_completed(timeout=5)
                 time.sleep(0.5)
             except Exception as e:
-                print(f"✗ Rotation failed: {e}")
+                print(f"✗ Rotation failed/timeout: {e}")
             continue
-
-        # Detect objects in current view
-        detections = detector.detect_objects(frame)
-        target_detections = [d for d in detections if d.class_name in settings.OBJECT_CLASSES]
 
         # Update live display
         live_display.update_detections(target_detections)
@@ -309,10 +358,10 @@ def main():
 
             # Rotate to next position
             try:
-                ep_chassis.move(x=0, y=0, z=ROTATION_STEP, z_speed=45).wait_for_completed()
+                ep_chassis.move(x=0, y=0, z=ROTATION_STEP, z_speed=45).wait_for_completed(timeout=5)
                 time.sleep(0.5)
             except Exception as e:
-                print(f"✗ Rotation failed: {e}")
+                print(f"✗ Rotation failed/timeout: {e}")
             continue
 
         # Found object(s)! Reset counter
@@ -331,12 +380,21 @@ def main():
             print(f"Target zone: {zone_name}")
 
             # ============================================
+            # OPEN GRIPPER IMMEDIATELY
+            # ============================================
+            print("\n→ Opening gripper fully...")
+            ep_gripper.open(power=100)
+            time.sleep(1.5)
+            ep_gripper.pause()
+            print("✓ Gripper fully open")
+
+            # ============================================
             # ITERATIVE VISUAL SERVOING APPROACH
             # ============================================
             print("\n→ Starting iterative approach to object...")
             live_display.update_status(f"Approaching {obj.class_name} iteratively...")
 
-            BBOX_AREA_THRESHOLD = 45000  # When bbox is this big, we're close enough
+            BBOX_AREA_THRESHOLD = 25000  # When bbox is this big, we're close enough (reduced to stop earlier)
             STEP_SIZE = 0.15  # Move 15cm per iteration
             MAX_ITERATIONS = 10
             total_distance_traveled = 0
@@ -362,19 +420,19 @@ def main():
                 if abs(angle_offset) > 2:
                     print(f"  → Centering ({angle_offset:.1f}°)...")
                     try:
-                        ep_chassis.move(x=0, y=0, z=angle_offset, z_speed=30).wait_for_completed()
+                        ep_chassis.move(x=0, y=0, z=angle_offset, z_speed=30).wait_for_completed(timeout=3)
                         time.sleep(0.3)
                     except Exception as e:
-                        print(f"  ✗ Centering failed: {e}")
+                        print(f"  ✗ Centering failed/timeout: {e}")
 
                 # STEP 2: Move forward one step
                 print(f"  → Moving {STEP_SIZE}m forward...")
                 try:
-                    ep_chassis.move(x=STEP_SIZE, y=0, z=0, xy_speed=0.3).wait_for_completed()
+                    ep_chassis.move(x=STEP_SIZE, y=0, z=0, xy_speed=0.3).wait_for_completed(timeout=5)
                     total_distance_traveled += STEP_SIZE
                     time.sleep(0.4)
                 except Exception as e:
-                    print(f"  ✗ Movement failed: {e}")
+                    print(f"  ✗ Movement failed/timeout: {e}")
                     break
 
                 # STEP 3: Re-scan and measure
@@ -384,7 +442,8 @@ def main():
                     print("  ⚠ No frame, stopping approach")
                     break
 
-                new_detections = detector.detect_objects(new_frame)
+                bright_new_frame = brighten_image(new_frame, factor=BRIGHTNESS_FACTOR)
+                new_detections = detector.detect_objects(bright_new_frame)
                 target_det = [d for d in new_detections if d.class_name == obj.class_name]
 
                 if not target_det:
@@ -418,7 +477,8 @@ def main():
             time.sleep(0.3)
             final_frame = threaded_cam.read()
             if final_frame is not None:
-                final_detections = detector.detect_objects(final_frame)
+                bright_final_frame = brighten_image(final_frame, factor=BRIGHTNESS_FACTOR)
+                final_detections = detector.detect_objects(bright_final_frame)
                 final_target = [d for d in final_detections if d.class_name == obj.class_name]
 
                 if final_target:
@@ -428,26 +488,19 @@ def main():
                     if abs(final_angle) > 2:
                         print(f"→ Final adjustment ({final_angle:.1f}°)...")
                         try:
-                            ep_chassis.move(x=0, y=0, z=final_angle, z_speed=20).wait_for_completed()
+                            ep_chassis.move(x=0, y=0, z=final_angle, z_speed=20).wait_for_completed(timeout=3)
                             time.sleep(0.3)
                         except Exception as e:
-                            print(f"✗ Final centering failed: {e}")
+                            print(f"✗ Final centering failed/timeout: {e}")
 
-            # STEP: Open gripper
-            print("\n→ Opening gripper...")
-            live_display.update_status(f"Preparing to grab {obj.class_name}...")
-            ep_gripper.open(power=50)
-            time.sleep(1)
-            ep_gripper.pause()
-
-            # STEP: Final small approach with open gripper
-            print(f"→ Final approach (0.1m with open gripper)...")
+            # STEP: Final small approach (gripper already open)
+            print(f"→ Final approach (0.20m with open gripper)...")
             try:
-                ep_chassis.move(x=0.1, y=0, z=0, xy_speed=0.2).wait_for_completed()
-                total_distance_traveled += 0.1
+                ep_chassis.move(x=0.20, y=0, z=0, xy_speed=0.15).wait_for_completed(timeout=5)
+                total_distance_traveled += 0.20
                 time.sleep(0.5)
             except Exception as e:
-                print(f"✗ Final approach failed: {e}")
+                print(f"✗ Final approach failed/timeout: {e}")
 
             # STEP: Close gripper to grab
             print("→ Grabbing object (closing gripper)...")
@@ -458,13 +511,22 @@ def main():
 
             print("✓ Object grabbed!")
 
+            # STEP: Lift object slightly
+            print("→ Lifting object...")
+            try:
+                ep_arm.move(x=0, y=50).wait_for_completed(timeout=3)
+                time.sleep(0.5)
+                print("✓ Object lifted")
+            except Exception as e:
+                print(f"⚠ Lift failed/timeout: {e}")
+
             # STEP: Move back to starting position
             print(f"→ Returning to center ({total_distance_traveled:.2f}m back)...")
             try:
-                ep_chassis.move(x=-total_distance_traveled, y=0, z=0, xy_speed=0.3).wait_for_completed()
+                ep_chassis.move(x=-total_distance_traveled, y=0, z=0, xy_speed=0.3).wait_for_completed(timeout=10)
                 time.sleep(0.5)
             except Exception as e:
-                print(f"✗ Return to center failed: {e}")
+                print(f"✗ Return to center failed/timeout: {e}")
 
             # STEP 6: Navigate to zone (simplified)
             print(f"→ Moving to {zone_name}...")
@@ -478,23 +540,23 @@ def main():
                 if zone_name == "zone_a":
                     # Turn left, drive forward, place
                     print("→ Turning left to Cup zone...")
-                    ep_chassis.move(x=0, y=0, z=-90, z_speed=45).wait_for_completed()
+                    ep_chassis.move(x=0, y=0, z=-90, z_speed=45).wait_for_completed(timeout=5)
                     time.sleep(0.5)
                     print("→ Driving to zone...")
-                    ep_chassis.move(x=0.8, y=0, z=0, xy_speed=0.3).wait_for_completed()
+                    ep_chassis.move(x=0.8, y=0, z=0, xy_speed=0.3).wait_for_completed(timeout=10)
                     time.sleep(0.5)
 
                 elif zone_name == "zone_b":
                     # Turn right, drive forward, place
                     print("→ Turning right to Bottle zone...")
-                    ep_chassis.move(x=0, y=0, z=90, z_speed=45).wait_for_completed()
+                    ep_chassis.move(x=0, y=0, z=90, z_speed=45).wait_for_completed(timeout=5)
                     time.sleep(0.5)
                     print("→ Driving to zone...")
-                    ep_chassis.move(x=0.8, y=0, z=0, xy_speed=0.3).wait_for_completed()
+                    ep_chassis.move(x=0.8, y=0, z=0, xy_speed=0.3).wait_for_completed(timeout=10)
                     time.sleep(0.5)
 
             except Exception as e:
-                print(f"✗ Zone navigation failed: {e}")
+                print(f"✗ Zone navigation failed/timeout: {e}")
 
             # STEP 7: Release object
             print("→ Releasing object...")
@@ -504,27 +566,39 @@ def main():
 
             print("✓ Object placed!")
 
+            # STEP: Lower arm back to floor level and keep gripper open
+            print("→ Lowering arm back to floor level...")
+            try:
+                ep_arm.move(x=0, y=-50).wait_for_completed(timeout=3)
+                time.sleep(0.3)
+                ep_gripper.open(power=100)
+                time.sleep(1)
+                ep_gripper.pause()
+                print("✓ Arm lowered, gripper open")
+            except Exception as e:
+                print(f"⚠ Arm lowering failed/timeout: {e}")
+
             # STEP 8: Return to center (simplified)
             print("→ Returning to center...")
             try:
                 # Drive back
                 print("→ Driving back...")
-                ep_chassis.move(x=-0.8, y=0, z=0, xy_speed=0.3).wait_for_completed()
+                ep_chassis.move(x=-0.8, y=0, z=0, xy_speed=0.3).wait_for_completed(timeout=10)
                 time.sleep(0.5)
 
                 # Turn back to forward
                 if zone_name == "zone_a":
                     print("→ Turning right to face forward...")
-                    ep_chassis.move(x=0, y=0, z=90, z_speed=45).wait_for_completed()
+                    ep_chassis.move(x=0, y=0, z=90, z_speed=45).wait_for_completed(timeout=5)
                 elif zone_name == "zone_b":
                     print("→ Turning left to face forward...")
-                    ep_chassis.move(x=0, y=0, z=-90, z_speed=45).wait_for_completed()
+                    ep_chassis.move(x=0, y=0, z=-90, z_speed=45).wait_for_completed(timeout=5)
 
                 time.sleep(0.5)
                 print("✓ Back at center position")
 
             except Exception as e:
-                print(f"✗ Return to center failed: {e}")
+                print(f"✗ Return to center failed/timeout: {e}")
 
             sorted_count += 1
             print(f"✓ Object sorted successfully! (Total: {sorted_count})")
