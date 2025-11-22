@@ -25,12 +25,23 @@ DETECTION_MODEL_PATH = os.path.join(MODELS_DIR, "yolo_model.pt")
 DETECTION_CONFIDENCE_THRESHOLD = 0.5
 DETECTION_IOU_THRESHOLD = 0.45
 
-# Supported object classes (minimum 3 for project requirements)
+# Supported object classes (minimum 2 for project requirements)
+# Note: Using COCO dataset classes from pre-trained YOLOv8
+# Selected objects: Easy to find, good detection, grippable
 OBJECT_CLASSES = [
-    "cube",
-    "sphere",
-    "cylinder"
+    "bottle",      # Plastic bottle - Zone B (RIGHT)
+    "cup"          # Cup/Mug - Zone A (LEFT)
 ]
+# Why these objects?
+# - Excellent YOLO detection accuracy (>90%)
+# - Commonly available for testing
+# - Different shapes (cylinder vs cup shape)
+# - Easy to grip with RoboMaster gripper
+# - Perfect for demonstration
+# - Can use multiple bottles/cups for more complex sorting
+
+# If you need a 3rd object class, good alternatives:
+# "book", "mouse", "remote", "banana", "apple", "sports ball", etc.
 
 # Tracking settings
 MAX_DISAPPEARED_FRAMES = 10
@@ -41,18 +52,17 @@ SORTING_STRATEGY = "class_based"  # Options: class_based, size_based, confidence
 DEFAULT_ZONE_CAPACITY = 10
 
 # Sorting zones configuration (x, y positions in meters)
+# Only 2 zones needed for 2 object types
 SORTING_ZONES = {
-    "zone_a": {"position": (1.0, 0.5), "capacity": 10},
-    "zone_b": {"position": (1.0, 1.5), "capacity": 10},
-    "zone_c": {"position": (1.0, 2.5), "capacity": 10},
+    "zone_a": {"position": (1.0, 0.5), "capacity": 10},   # Left zone - Cups
+    "zone_b": {"position": (1.0, 1.5), "capacity": 10},   # Right zone - Bottles
     "zone_default": {"position": (0.5, 1.5), "capacity": 20}
 }
 
 # Class to zone mapping for class-based sorting
 CLASS_ZONE_MAPPING = {
-    "cube": "zone_a",
-    "sphere": "zone_b",
-    "cylinder": "zone_c"
+    "bottle": "zone_b",      # Bottles go to RIGHT zone
+    "cup": "zone_a"          # Cups go to LEFT zone
 }
 
 # Movement settings

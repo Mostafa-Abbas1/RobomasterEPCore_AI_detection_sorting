@@ -15,7 +15,7 @@ torchvision>=0.10.0
 # tensorflow>=2.6.0
 
 # Object Detection
-# ultralytics>=8.0.0  # For YOLOv8
+ultralytics>=8.0.0  # For YOLOv8
 # yolov5  # Alternative YOLO implementation
 
 # Image Processing
